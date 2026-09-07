@@ -1,211 +1,207 @@
-import io
-
-import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
 import streamlit as st
 
+st.set_page_config(
+    page_title="EDA Interface",
+    page_icon="📊",
+    layout="wide"
+)
 
-MAX_UPLOAD_SIZE_MB = 50
-
-st.set_page_config(page_title="CSV Explorer",layout="wide",)
-st.title("CSV Explorer")
-st.caption("Inspect your dataset and discover its primary value patterns.")
-
+st.title("Exploratory Data Analysis Interface")
 
 with st.sidebar:
-    st.header("Data Controls")
-
-    uploaded_file = st.file_uploader(
-        "Upload a CSV dataset",
-        type=["csv"],
-        help=f"CSV files up to {MAX_UPLOAD_SIZE_MB} MB are supported.",
+    st.header("Dataset Controls")
+    f = st.file_uploader(
+        "Upload a CSV file",
+        type=["csv"]
     )
 
-
-def load_csv(file):
-    if file is None:
-        return None, None
-
-    if file.size > MAX_UPLOAD_SIZE_MB * 1024 * 1024:
-        return None, f"The file is larger than {MAX_UPLOAD_SIZE_MB} MB."
-
-    try:
-        file_bytes = file.getvalue()
-        dataframe = pd.read_csv(
-            io.BytesIO(file_bytes),
-            encoding="utf-8-sig",
-        )
-    except UnicodeDecodeError:
-        return None, "The CSV must use UTF-8 text encoding."
-    except pd.errors.EmptyDataError:
-        return None, "The uploaded CSV is empty."
-    except pd.errors.ParserError as error:
-        return None, f"The CSV format could not be parsed: {error}"
-    except Exception as error:
-        return None, f"The file could not be read: {error}"
-
-    if dataframe.empty:
-        return None, "The uploaded CSV has no data rows."
-
-    if dataframe.shape[1] == 0:
-        return None, "The uploaded CSV has no columns."
-
-    return dataframe, None
-
-
-dataframe, upload_error = load_csv(uploaded_file)
-
-if upload_error:
-    st.error(upload_error)
-
-if dataframe is None:
-    st.info("Upload a CSV file from the sidebar to begin exploring.")
+if f is None:
+    st.info("Please upload a CSV file to begin.")
     st.stop()
 
+try:
+    df = pd.read_csv(f)
+except Exception as e:
+    st.error(f"Could not read the CSV file: {e}")
+    st.stop()
+
+if df.empty:
+    st.error("The uploaded CSV file is empty.")
+    st.stop()
 
 with st.sidebar:
-    st.divider()
-
-    selected_column = st.selectbox(
-        "Attribute to Visualize",
-        dataframe.columns,
+    st.header("Attribute Selection")
+    col = st.selectbox(
+        "Select a column for visualization",
+        df.columns
     )
 
+st.header("Dataset Preview & Metadata")
 
-st.subheader("Dataset Overview")
-
-metric_columns = st.columns(3)
-
-metric_columns[0].metric(
-    "Rows",
-    f"{dataframe.shape[0]:,}",
+st.subheader("First 5 Rows")
+st.dataframe(
+    df.head(),
+    use_container_width=True,
+    hide_index=True
 )
 
-metric_columns[1].metric(
-    "Columns",
-    f"{dataframe.shape[1]:,}",
-)
+st.subheader("Dataset Shape")
 
-metric_columns[2].metric(
-    "Missing Values",
-    f"{int(dataframe.isna().sum().sum()):,}",
-)
+a, b = st.columns(2)
+a.metric("Rows", df.shape[0])
+b.metric("Columns", df.shape[1])
 
+st.subheader("Column Data Types")
 
-st.markdown("#### Dataset Preview")
+types = pd.DataFrame({
+    "Column": df.columns,
+    "Data Type": df.dtypes.astype(str)
+})
 
 st.dataframe(
-    dataframe.head(5),
+    types,
     use_container_width=True,
-    hide_index=True,
+    hide_index=True
 )
 
+st.subheader("Missing Values per Column")
 
-st.markdown("#### Column Metadata")
-
-metadata = pd.DataFrame(
-    {
-        "Column": dataframe.columns,
-        "Data Type": dataframe.dtypes.astype(str).values,
-        "Missing Values": dataframe.isna().sum().values,
-        "Non-Null Values": dataframe.notna().sum().values,
-        "Unique Values": dataframe.nunique(dropna=True).values,
-    }
-)
+miss = pd.DataFrame({
+    "Column": df.columns,
+    "Missing Count": df.isna().sum(),
+    "Missing Percentage": (
+        df.isna().mean() * 100
+    ).round(2)
+})
 
 st.dataframe(
-    metadata,
+    miss,
     use_container_width=True,
-    hide_index=True,
+    hide_index=True
 )
 
+st.subheader("Numerical Summary")
 
-st.markdown("#### Numerical Summary")
+num = df.select_dtypes(include="number")
 
-numerical_data = dataframe.select_dtypes(include="number")
-
-if numerical_data.empty:
-    st.info("No numerical attributes were found in this dataset.")
+if num.empty:
+    st.info("No numerical columns found.")
 else:
-    numerical_summary = pd.DataFrame(
-        {
-            "Mean": numerical_data.mean(),
-            "Median": numerical_data.median(),
-            "Minimum": numerical_data.min(),
-            "Maximum": numerical_data.max(),
-        }
-    ).round(3)
+    summary = pd.DataFrame({
+        "Mean": num.mean(),
+        "Median": num.median(),
+        "Minimum": num.min(),
+        "Maximum": num.max()
+    }).round(2)
 
     st.dataframe(
-        numerical_summary,
-        use_container_width=True,
+        summary,
+        use_container_width=True
     )
 
+st.header("Visualization")
 
-st.divider()
+s = df[col].dropna()
 
-st.subheader(f"Visual Analysis: {selected_column}")
+if pd.api.types.is_numeric_dtype(df[col]):
+    st.subheader(f"Histogram of {col}")
 
-selected_series = dataframe[selected_column]
-
-
-if pd.api.types.is_numeric_dtype(selected_series):
-    st.caption("Detected Attribute Type: Numerical")
-
-    chart_data = selected_series.dropna()
-
-    if chart_data.empty:
-        st.warning("This attribute contains no values to plot.")
+    if s.empty:
+        st.warning("This column has no values to display.")
     else:
-        figure, axis = plt.subplots(figsize=(10, 4.5))
+        fig, ax = plt.subplots(figsize=(10, 5))
 
-        axis.hist(
-            chart_data,
-            bins="auto",
-            color="#176B87",
-            edgecolor="white",
+        counts, bins, bars = ax.hist(
+            s,
+            bins=20,
+            density=True,
+            color="#8ecae6",
+            edgecolor="black",
+            alpha=0.8,
+            label="Histogram"
         )
 
-        axis.set_title(f"Distribution of {selected_column}")
-        axis.set_xlabel(selected_column)
-        axis.set_ylabel("Frequency")
-        axis.grid(axis="y", alpha=0.25)
+        x = np.linspace(s.min(), s.max(), 300)
+        bw = 1.06 * s.std() * len(s) ** (-1 / 5)
 
-        figure.tight_layout()
-        st.pyplot(figure)
-        plt.close(figure)
+        if bw == 0 or np.isnan(bw):
+            bw = 1
+
+        y = np.exp(
+            -0.5 * ((x[:, None] - s.values[None, :]) / bw) ** 2
+        ).sum(axis=1)
+
+        y = y / (len(s) * bw * np.sqrt(2 * np.pi))
+
+        ax.plot(
+            x,
+            y,
+            color="#e63946",
+            linewidth=3,
+            label="Density Line"
+        )
+
+        ax.set_title(f"Distribution of {col}")
+        ax.set_xlabel(col)
+        ax.set_ylabel("Density")
+        ax.grid(True, linestyle="--", alpha=0.4)
+        ax.legend()
+
+        st.pyplot(fig)
+        plt.close(fig)
 
 else:
-    st.caption("Detected Attribute Type: Categorical")
+    st.subheader(f"Bar Chart of {col}")
 
-    category_counts = (
-        selected_series
+    count = (
+        df[col]
         .fillna("Missing")
         .astype(str)
         .value_counts()
         .head(30)
-        .sort_values(ascending=True)
     )
 
-    if category_counts.empty:
-        st.warning("This attribute contains no values to plot.")
-    else:
-        figure, axis = plt.subplots(figsize=(10, 4.5))
+    percent = (count / count.sum() * 100).round(2)
 
-        axis.barh(
-            category_counts.index,
-            category_counts.values,
-            color="#E07A5F",
+    fig, ax = plt.subplots(figsize=(10, 5))
+
+    bars = ax.bar(
+        count.index,
+        count.values,
+        color="#f4a261",
+        edgecolor="black",
+        label="Category Count"
+    )
+
+    ax.plot(
+        count.index,
+        count.values,
+        color="#264653",
+        marker="o",
+        linewidth=3,
+        label="Count Line"
+    )
+
+    ax.set_title(f"Frequency of {col}")
+    ax.set_xlabel(col)
+    ax.set_ylabel("Count")
+    ax.tick_params(axis="x", rotation=45)
+    ax.grid(True, axis="y", linestyle="--", alpha=0.4)
+    ax.legend()
+
+    for bar, p in zip(bars, percent):
+        ax.text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height(),
+            f"{p}%",
+            ha="center",
+            va="bottom"
         )
 
-        axis.set_title(f"Frequency of {selected_column}")
-        axis.set_xlabel("Count")
-        axis.set_ylabel(selected_column)
-        axis.grid(axis="x", alpha=0.25)
+    fig.tight_layout()
 
-        figure.tight_layout()
-        st.pyplot(figure)
-        plt.close(figure)
-
-        if selected_series.nunique(dropna=True) > 30:
-            st.caption("Showing the 30 most frequent categories.")
+    st.pyplot(fig)
+    plt.close(fig)
